@@ -1,8 +1,12 @@
+import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -20,16 +24,49 @@ def write_pdf(path: Path, text: str | None) -> None:
     document.save()
 
 
+class ControlledOpenAIHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers["Content-Length"])
+        request = json.loads(self.rfile.read(length))
+        context = json.loads(request["input"][1]["content"])
+        if context["latest_answer"] == "trigger provider failure":
+            self.send_error(503)
+            return
+        if context["latest_answer"] == "slow answer":
+            time.sleep(0.3)
+        question = (
+            "What trade-off did you make in the payment API migration?"
+            if context["question_type"] == "relevant follow-up"
+            else "Tell me about the payment service you built."
+        )
+        body = json.dumps({"output_text": question}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
 @pytest.fixture(scope="module")
 def browser_app(tmp_path_factory):
     directory = tmp_path_factory.mktemp("resume-preparation")
     database = directory / "preparations.sqlite3"
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), ControlledOpenAIHandler)
+    import threading
+
+    provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
+    provider_thread.start()
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
 
     environment = os.environ.copy()
     environment["INTERVIEWDADDY_DATABASE"] = str(database)
+    environment["OPENAI_API_KEY"] = "controlled-test-key"
+    environment["OPENAI_BASE_URL"] = f"http://127.0.0.1:{provider.server_port}"
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
         cwd=ROOT,
@@ -56,6 +93,7 @@ def browser_app(tmp_path_factory):
             browser = playwright.chromium.launch(
                 headless=True,
                 executable_path=playwright.chromium.executable_path,
+                args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
             )
             page = browser.new_page()
             yield page, base_url, directory
@@ -63,6 +101,8 @@ def browser_app(tmp_path_factory):
     finally:
         server.terminate()
         server.wait(timeout=5)
+        provider.shutdown()
+        provider.server_close()
 
 
 def test_candidate_can_correct_save_and_reopen_preparation(browser_app):
@@ -152,7 +192,8 @@ def test_keyboard_flow_has_named_controls_visible_focus_and_announced_status(bro
     assert page.get_by_label("Target role").count() == 1
     assert page.get_by_label("Experience level").count() == 1
     assert page.get_by_label("Job description (optional)").count() == 1
-    assert page.get_by_role("status").count() == 1
+    assert page.locator("#status-message").get_attribute("role") == "status"
+    assert page.locator("#capture-state").get_attribute("role") == "status"
 
     unsupported_file = directory / "notes.txt"
     unsupported_file.write_text("not a PDF")
@@ -160,3 +201,174 @@ def test_keyboard_flow_has_named_controls_visible_focus_and_announced_status(bro
     alert = page.get_by_role("alert")
     assert alert.is_visible()
     assert "Choose a PDF" in alert.inner_text()
+def test_spoken_interview_follows_answer_and_persists_completion(browser_app):
+    page, base_url, _ = browser_app
+    saved = page.request.post(
+        f"{base_url}/api/preparations",
+        data={
+            "target_role": "Backend Engineer",
+            "experience_level": "mid-level",
+            "job_description": "",
+            "resume_text": "I led a payment API migration and reduced failures.",
+        },
+    ).json()
+    page.add_init_script("""window.SpeechRecognition = class {
+      start() { setTimeout(() => this.onresult({results: [[{transcript: 'I moved writes to an idempotent API'}]]}), 10); }
+      stop() {}
+    };""")
+    page.goto(base_url)
+    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Check microphone").click()
+    page.get_by_text("Microphone capture: on (live level check)").wait_for()
+    page.get_by_role("button", name="Start 10-minute interview").click()
+    page.wait_for_timeout(500)
+    assert page.locator("#interview-error").is_hidden(), page.locator("#interview-error").evaluate("(element) => element.textContent")
+    question = "Tell me about the payment service you built."
+    page.get_by_text(f"Interviewer: {question}").wait_for()
+    page.get_by_role("button", name="Speak answer").click()
+    follow_up = "What trade-off did you make in the payment API migration?"
+    page.get_by_text(f"Interviewer: {follow_up}").wait_for()
+    page.get_by_role("button", name="Speak answer").click()
+    page.get_by_text("Interview complete.", exact=True).wait_for()
+    interview_id = page.locator("#transcript").get_attribute("data-interview-id")
+    assert interview_id
+    result = page.request.get(f"{base_url}/api/interviews/{interview_id}").json()
+    assert result["status"] == "completed"
+    assert result["turns"] == [
+        {"speaker": "Interviewer", "text": question},
+        {"speaker": "Candidate", "text": "I moved writes to an idempotent API"},
+        {"speaker": "Interviewer", "text": follow_up},
+        {"speaker": "Candidate", "text": "I moved writes to an idempotent API"},
+    ]
+    assert result["preparation_id"] == saved["id"]
+    assert page.get_by_text("Microphone capture: off").is_visible()
+    rejected = page.request.post(
+        f"{base_url}/api/interviews/{interview_id}/turns",
+        data={"text": "extra answer"},
+    )
+    assert rejected.status == 409
+def test_candidate_can_finish_early_in_browser(browser_app):
+    page, base_url, _ = browser_app
+    saved = page.request.post(
+        f"{base_url}/api/preparations",
+        data={
+            "target_role": "Backend Engineer",
+            "experience_level": "mid-level",
+            "job_description": "",
+            "resume_text": "I led a payment API migration.",
+        },
+    ).json()
+    page.add_init_script("window.SpeechRecognition = class { start() {} };")
+    page.goto(base_url)
+    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Start 10-minute interview").click()
+    page.get_by_text("Interviewer: Tell me about the payment service you built.").wait_for()
+    interview_id = page.locator("#transcript").get_attribute("data-interview-id")
+    page.get_by_role("button", name="Finish interview").click()
+    page.get_by_role("status").get_by_text("Interview complete.").wait_for()
+    result = page.request.get(f"{base_url}/api/interviews/{interview_id}").json()
+    assert result["status"] == "completed"
+    assert result["preparation_id"] == saved["id"]
+
+
+def test_ten_minute_limit_completes_without_another_question(browser_app):
+    page, base_url, directory = browser_app
+    saved = page.request.post(
+        f"{base_url}/api/preparations",
+        data={
+            "target_role": "Backend Engineer",
+            "experience_level": "mid-level",
+            "job_description": "",
+            "resume_text": "I led a payment API migration.",
+        },
+    ).json()
+    interview = page.request.post(
+        f"{base_url}/api/interviews", data={"preparation_id": saved["id"]}
+    ).json()
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    with sqlite3.connect(directory / "preparations.sqlite3") as db:
+        db.execute("UPDATE interviews SET started_at = ? WHERE id = ?", (expired, interview["id"]))
+    result = page.request.post(
+        f"{base_url}/api/interviews/{interview['id']}/turns",
+        data={"text": "I used idempotency keys to prevent duplicate writes."},
+    ).json()
+    assert result["status"] == "completed"
+    assert result["turns"][-1] == {
+        "speaker": "Candidate",
+        "text": "I used idempotency keys to prevent duplicate writes.",
+    }
+    assert len(result["turns"]) == 2
+    expired_session = page.request.post(
+        f"{base_url}/api/interviews", data={"preparation_id": saved["id"]}
+    ).json()
+    with sqlite3.connect(directory / "preparations.sqlite3") as db:
+        db.execute("UPDATE interviews SET started_at = ? WHERE id = ?", (expired, expired_session["id"]))
+    expired_result = page.request.get(f"{base_url}/api/interviews/{expired_session['id']}").json()
+    assert expired_result["status"] == "completed"
+def test_provider_failure_keeps_answer_and_finishes_with_notice(browser_app):
+    page, base_url, _ = browser_app
+    saved = page.request.post(
+        f"{base_url}/api/preparations",
+        data={
+            "target_role": "Backend Engineer",
+            "experience_level": "mid-level",
+            "job_description": "",
+            "resume_text": "I led a payment API migration.",
+        },
+    ).json()
+    page.add_init_script("""window.SpeechRecognition = class {
+      start() { setTimeout(() => this.onresult({results: [[{transcript: 'trigger provider failure'}]]}), 10); }
+      stop() {}
+    };""")
+    page.goto(base_url)
+    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Start 10-minute interview").click()
+    page.get_by_text("Interviewer: Tell me about the payment service you built.").wait_for()
+    page.get_by_role("button", name="Speak answer").click()
+    page.get_by_text("The follow-up could not be generated. Your recognized answer was saved and the interview is complete.").wait_for()
+    interview_id = page.locator("#transcript").get_attribute("data-interview-id")
+    result = page.request.get(f"{base_url}/api/interviews/{interview_id}").json()
+    assert result["status"] == "completed"
+    assert result["turns"][-1] == {"speaker": "Candidate", "text": "trigger provider failure"}
+    assert len(result["turns"]) == 2
+
+
+def test_denied_microphone_permission_has_recovery_message(browser_app):
+    page, base_url, _ = browser_app
+    page.add_init_script("""Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) }
+    });""")
+    page.goto(base_url)
+    page.get_by_role("button", name="Check microphone").click()
+    assert "Allow microphone access in browser settings" in page.get_by_role("alert").inner_text()
+    assert page.get_by_text("Microphone capture: off").is_visible()
+def test_concurrent_answers_cannot_exceed_follow_up_limit(browser_app):
+    page, base_url, _ = browser_app
+    saved = page.request.post(
+        f"{base_url}/api/preparations",
+        data={
+            "target_role": "Backend Engineer",
+            "experience_level": "mid-level",
+            "job_description": "",
+            "resume_text": "I led a payment API migration.",
+        },
+    ).json()
+    interview = page.request.post(
+        f"{base_url}/api/interviews", data={"preparation_id": saved["id"]}
+    ).json()
+    page.goto(base_url)
+    statuses = page.evaluate(
+        """async (id) => {
+          const answer = JSON.stringify({text: 'slow answer'});
+          const first = fetch(`/api/interviews/${id}/turns`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: answer}).then(r => r.status);
+          await new Promise(resolve => setTimeout(resolve, 30));
+          const second = await fetch(`/api/interviews/${id}/turns`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: answer});
+          return [await first, second.status];
+        }""",
+        interview["id"],
+    )
+    assert statuses == [200, 409]
+    result = page.request.get(f"{base_url}/api/interviews/{interview['id']}").json()
+    assert result["follow_ups_used"] == 1
+    assert result["turns"].count({"speaker": "Candidate", "text": "slow answer"}) == 1
+    assert len(result["turns"]) == 3

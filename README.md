@@ -1,6 +1,6 @@
-# InterviewDaddy · Resume preparation
+# InterviewDaddy · Spoken resume interview
 
-A local-only resume preparation app. There are no accounts, live AI calls, voice features, or public-hosting assumptions in this slice.
+A local-only resume preparation and spoken interview app. There are no accounts or public-hosting assumptions.
 
 ## Start the app
 
@@ -24,7 +24,15 @@ The server binds to loopback (`127.0.0.1`) so the app is available only on this 
 3. Add a target role and experience level. A job description is optional.
 4. Save the preparation. Use **Open preparation** to reopen it or **Delete** to remove it from this device.
 
-The app retains saved resume and job-description text in `data/preparations.sqlite3` until you delete each preparation. This preparation step makes no AI-provider request. A later interview feature may send text to OpenAI for reasoning under that provider's policies; downloaded files and provider-side retention are separate from local deletion. Resume and job-description contents are untrusted reference data and must never be treated as model instructions.
+Saved resume and job-description text remain in local SQLite until deletion. An interview sends resume context and completed text answers to OpenAI for reasoning. Browser SpeechRecognition may send microphone audio to the browser platform's service; audio and video are not stored by this app. Downloaded copies and provider retention are separate from local deletion. Ordinary OpenAI API access requires an API key and API billing; a ChatGPT subscription does not grant API access.
+
+## Run a spoken interview
+
+Set `OPENAI_API_KEY` in the server environment before launching the app. The key stays on the server. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow and allows up to 10 minutes, one opening question, and one answer-based follow-up. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If follow-up generation fails, the recognized answer remains saved and the interview completes.
+
+Use a supported browser with microphone and speech synthesis support. Choose **Check microphone** and **Test speaker** before starting. Allow microphone permission when asked. Browser recognition support and audio processing vary by browser; check its privacy policy.
+
+The interviewer will not start without a saved preparation and configured API key. Keep the app bound to loopback and do not expose it publicly.
 
 ## Run browser checks
 

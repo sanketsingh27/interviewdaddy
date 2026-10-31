@@ -111,6 +111,28 @@
         <ul id="saved-list" class="saved-list" aria-label="Saved preparations"></ul>
       </section>
     </section>
+    <section id="interview-panel" class="panel" aria-labelledby="interview-title">
+      <h2 id="interview-title" class="section-heading">3. Spoken interview</h2>
+      <p>10 minutes maximum · one opening question and one answer-based follow-up. You can finish early.</p>
+      <p>OpenAI receives your saved resume context and completed text answers for reasoning. Speech recognition is provided by your browser and may send microphone audio to its platform service. No raw audio is stored. API usage requires an OpenAI API key and separate API billing; a ChatGPT subscription does not provide API access.</p>
+      <div class="actions">
+        <button id="mic-check" class="secondary" type="button">Check microphone</button>
+        <button id="speaker-check" class="secondary" type="button">Test speaker</button>
+        <button id="start-interview" type="button">Start 10-minute interview</button>
+      </div>
+      <p id="capture-state" role="status">Microphone capture: off</p>
+      <label for="mic-level">Microphone level</label>
+      <progress id="mic-level" max="100" value="0">0%</progress>
+      <p id="interview-error" role="alert" hidden></p>
+      <div id="conversation" hidden>
+        <ol id="transcript" aria-label="Saved interview transcript"></ol>
+        <div class="actions">
+          <button id="answer-button" type="button">Speak answer</button>
+          <button id="finish-interview" class="danger" type="button">Finish interview</button>
+        </div>
+        <p id="interview-state" role="status" aria-live="polite"></p>
+      </div>
+    </section>
     <footer>For local use only. Keep this app bound to your own device.</footer>
   </main>
 
@@ -271,6 +293,149 @@
     }
 
     loadPreparations();
+    let activeInterview = null;
+    let microphoneStream = null;
+    let audioContext = null;
+    let interviewTimer = null;
+    let activeRecognition = null;
+    let meterFrame = null;
+
+    function stopMicrophone() {
+      if (meterFrame) cancelAnimationFrame(meterFrame);
+      microphoneStream?.getTracks().forEach(track => track.stop());
+      microphoneStream = null;
+      audioContext?.close();
+      audioContext = null;
+      document.querySelector("#mic-level").value = 0;
+      document.querySelector("#capture-state").textContent = "Microphone capture: off";
+    }
+
+    async function checkMicrophone() {
+      if (activeInterview) return;
+      stopMicrophone();
+      try {
+        microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        document.querySelector("#capture-state").textContent = "Microphone capture: on (live level check)";
+        audioContext = new AudioContext();
+        const analyser = audioContext.createAnalyser();
+        audioContext.createMediaStreamSource(microphoneStream).connect(analyser);
+        const samples = new Uint8Array(analyser.fftSize);
+        const meter = document.querySelector("#mic-level");
+        const tick = () => {
+          analyser.getByteTimeDomainData(samples);
+          const peak = Math.max(...samples.map(sample => Math.abs(sample - 128)));
+          meter.value = Math.min(100, peak * 2);
+          meterFrame = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (error) {
+        stopMicrophone();
+        showInterviewError(error.name === "NotAllowedError"
+          ? "Microphone permission was denied. Allow microphone access in browser settings, then check again."
+          : "No usable microphone was found. Connect or enable a microphone and retry.");
+      }
+    }
+
+    function showInterviewError(message) {
+      const error = document.querySelector("#interview-error");
+      error.textContent = message;
+      error.hidden = false;
+    }
+
+    function addTranscript(turns) {
+      const list = document.querySelector("#transcript");
+      list.replaceChildren(...turns.map(turn => {
+        const item = document.createElement("li");
+        item.textContent = `${turn.speaker}: ${turn.text}`;
+        return item;
+      }));
+    }
+
+    function speakQuestion(question) {
+      if (!("speechSynthesis" in window)) {
+        showInterviewError("Speech playback is not supported in this browser. Try a current Chrome or Edge browser.");
+        return;
+      }
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(question));
+    }
+
+    document.querySelector("#mic-check").addEventListener("click", checkMicrophone);
+    document.querySelector("#speaker-check").addEventListener("click", () => {
+      if (!("speechSynthesis" in window)) return showInterviewError("Speech playback is not supported in this browser.");
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance("Speaker check. If you can hear this, playback is working."));
+    });
+    document.querySelector("#start-interview").addEventListener("click", async () => {
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Recognition) return showInterviewError("Speech recognition is not supported. Use a supported browser such as Chrome or Edge.");
+      if (!("speechSynthesis" in window)) return showInterviewError("Speech playback is not supported. Use a current browser with speech synthesis.");
+      if (!currentPreparationId) return showInterviewError("Save a preparation before starting the interview.");
+      try {
+        if (!microphoneStream) await checkMicrophone();
+        if (!microphoneStream) return;
+        const result = await responseData(await fetch("/api/interviews", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ preparation_id: currentPreparationId }),
+        }));
+        activeInterview = result.id;
+        document.querySelector("#transcript").dataset.interviewId = result.id;
+        document.querySelector("#conversation").hidden = false;
+        addTranscript(result.turns);
+        const remainingMs = Math.max(0, Date.parse(result.started_at) + result.duration_minutes * 60_000 - Date.now());
+        interviewTimer = setTimeout(() => document.querySelector("#finish-interview").click(), remainingMs);
+        document.querySelector("#interview-state").textContent = `Interview active. ${result.duration_minutes} minutes maximum.`;
+        speakQuestion(result.question);
+      } catch (error) { showInterviewError(error.message); }
+    });
+    document.querySelector("#answer-button").addEventListener("click", () => {
+      if (!activeInterview) return;
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Recognition) return showInterviewError("Speech recognition is not supported in this browser.");
+      const recognition = new Recognition();
+      recognition.onend = () => { activeRecognition = null; };
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.onresult = async event => {
+        const text = event.results[0][0].transcript;
+        recognition.stop();
+        try {
+          const result = await responseData(await fetch(`/api/interviews/${activeInterview}/turns`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+          }));
+          addTranscript(result.turns);
+          document.querySelector("#interview-state").textContent = result.notice || (result.status === "completed" ? "Interview complete." : "Answer saved.");
+          if (result.status === "completed") {
+            activeInterview = null;
+            activeRecognition?.abort();
+            activeRecognition = null;
+            clearTimeout(interviewTimer);
+            window.speechSynthesis?.cancel();
+            stopMicrophone();
+          }
+          else speakQuestion(result.question);
+        } catch (error) { showInterviewError(error.message); }
+      };
+      recognition.onerror = event => showInterviewError(event.error === "not-allowed"
+        ? "Microphone permission was denied. Allow access in browser settings and retry."
+        : `Speech recognition failed (${event.error}). Check your microphone and retry.`);
+      recognition.start();
+    });
+    document.querySelector("#finish-interview").addEventListener("click", async () => {
+      if (activeInterview) {
+        const result = await responseData(await fetch(`/api/interviews/${activeInterview}/finish`, { method: "POST" }));
+        addTranscript(result.turns);
+        activeInterview = null;
+      }
+      activeRecognition?.abort();
+      activeRecognition = null;
+      clearTimeout(interviewTimer);
+      window.speechSynthesis?.cancel();
+      stopMicrophone();
+      document.querySelector("#interview-state").textContent = "Interview complete.";
+    });
+    window.addEventListener("pagehide", () => { activeRecognition?.abort(); window.speechSynthesis?.cancel(); stopMicrophone(); });
+
   </script>
 </body>
 </html>

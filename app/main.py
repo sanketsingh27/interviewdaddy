@@ -33,7 +33,7 @@ def connect_database() -> sqlite3.Connection:
 
 
 def initialize_database() -> None:
-    """Create the preparations table if it does not already exist."""
+    """Create preparation and interview tables, including additive interview migrations."""
     with connect_database() as connection:
         connection.execute(
             """CREATE TABLE IF NOT EXISTS preparations (
@@ -46,6 +46,55 @@ def initialize_database() -> None:
                 updated_at TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS interviews (
+                id TEXT PRIMARY KEY,
+                preparation_id TEXT NOT NULL REFERENCES preparations(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK(status IN ('active', 'completed')),
+                question TEXT NOT NULL,
+                turns TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                follow_ups_used INTEGER NOT NULL DEFAULT 0,
+                processing INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(interviews)")}
+        if "processing" not in columns:
+            connection.execute("ALTER TABLE interviews ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
+class InterviewStartInput(BaseModel):
+    preparation_id: str
+
+
+class InterviewAnswerInput(BaseModel):
+    text: str = Field(min_length=1, max_length=10_000)
+
+
+@app.post("/api/interviews", status_code=201)
+def start_interview(payload: InterviewStartInput) -> dict:
+    from app.interview import create_interview
+
+    return create_interview(payload.preparation_id)
+
+
+@app.get("/api/interviews/{interview_id}")
+def read_interview(interview_id: str) -> dict:
+    from app.interview import get_interview
+
+    return get_interview(interview_id)
+
+
+@app.post("/api/interviews/{interview_id}/turns")
+def add_interview_turn(interview_id: str, payload: InterviewAnswerInput) -> dict:
+    from app.interview import submit_answer
+
+    return submit_answer(interview_id, payload.text)
+
+
+@app.post("/api/interviews/{interview_id}/finish")
+def end_interview(interview_id: str) -> dict:
+    from app.interview import finish_interview
+
+    return finish_interview(interview_id)
 
 
 @app.on_event("startup")
