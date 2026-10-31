@@ -35,6 +35,8 @@ OpenAI HTTPS requests use the `certifi` CA bundle from `requirements.txt`, inclu
 
 Saved resume and job-description text remain in local SQLite until deletion. An interview sends resume context and completed text answers to OpenAI for reasoning. Browser SpeechRecognition may send microphone audio to the browser platform's service; audio and video are not stored by this app. Downloaded copies and provider retention are separate from local deletion. Ordinary OpenAI API access requires an API key and API billing; a ChatGPT subscription does not grant API access.
 
+The optional **Enable camera preview** control displays video locally during preparation and the interview. Video is not uploaded, recorded, stored in the transcript, or assessed. Denying access or losing a camera does not prevent an interview. Disable the preview to stop capture; camera tracks also stop when you leave the page or the interview ends. Re-enable it if you want a preview for another session.
+
 ## Run a spoken interview
 
 Set `OPENAI_API_KEY` in the repository-root `.env` file before launching. `./dev.sh` loads it server-side. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` if needed. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow and allows up to 10 minutes, one opening question, and one answer-based follow-up. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If follow-up generation fails, the recognized answer remains saved and the interview completes.
@@ -50,7 +52,7 @@ Install the test dependencies and Chromium once:
 ```sh
 python -m pip install -r requirements-dev.txt
 python -m playwright install chromium
-pytest -q
+python -m pytest -q
 ```
 
 The browser journey tests run the real FastAPI server with a temporary SQLite database and exercise the visible page in Chromium.

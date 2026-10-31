@@ -45,6 +45,7 @@
     .saved-item p { margin: 0; }
     .saved-item small { display: block; color: var(--muted); }
     .saved-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #camera-preview { display: block; width: min(100%, 360px); margin-top: 12px; border-radius: 9px; background: #17312d; }
     footer { margin: 20px 4px 0; color: var(--muted); font-size: .84rem; }
     @media (max-width: 520px) { main { margin-top: 26px; } .saved-item { align-items: flex-start; } }
   </style>
@@ -110,6 +111,13 @@
         <p id="empty-saved" class="hint">No saved preparations yet.</p>
         <ul id="saved-list" class="saved-list" aria-label="Saved preparations"></ul>
       </section>
+    </section>
+    <section class="panel" aria-labelledby="camera-title">
+      <h2 id="camera-title" class="section-heading">Optional camera preview</h2>
+      <p>Your video stays in this browser: it is not uploaded, recorded, stored in the transcript, or used for assessment. You can continue without a camera.</p>
+      <button id="camera-toggle" class="secondary" type="button" aria-pressed="false">Enable camera preview</button>
+      <p id="camera-state" role="status" aria-live="polite">Camera preview: off</p>
+      <video id="camera-preview" aria-label="Local camera preview" autoplay muted playsinline hidden></video>
     </section>
     <section id="interview-panel" class="panel" aria-labelledby="interview-title">
       <h2 id="interview-title" class="section-heading">3. Spoken interview</h2>
@@ -299,6 +307,53 @@
     let interviewTimer = null;
     let activeRecognition = null;
     let meterFrame = null;
+    const cameraToggle = document.querySelector("#camera-toggle");
+    const cameraPreview = document.querySelector("#camera-preview");
+    const cameraState = document.querySelector("#camera-state");
+    let cameraStream = null;
+    let cameraRequest = 0;
+    let cameraPending = false;
+
+    function stopCamera(message = "Camera preview: off") {
+      cameraRequest++;
+      cameraPending = false;
+      cameraStream?.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+      cameraPreview.srcObject = null;
+      cameraPreview.hidden = true;
+      cameraToggle.textContent = "Enable camera preview";
+      cameraToggle.setAttribute("aria-pressed", "false");
+      cameraState.textContent = message;
+    }
+
+    cameraToggle.addEventListener("click", async () => {
+      if (cameraStream || cameraPending) return stopCamera();
+      const request = ++cameraRequest;
+      cameraPending = true;
+      cameraToggle.textContent = "Disable camera preview";
+      cameraState.textContent = "Waiting for camera permission. You can continue without it.";
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        if (request !== cameraRequest) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        cameraPending = false;
+        cameraStream = stream;
+        stream.getVideoTracks()[0].addEventListener("ended", () => {
+          if (cameraStream === stream) stopCamera("Camera connection lost. You can continue without it.");
+        });
+        cameraPreview.srcObject = stream;
+        cameraPreview.hidden = false;
+        cameraToggle.setAttribute("aria-pressed", "true");
+        cameraState.textContent = "Camera preview: on";
+      } catch (error) {
+        if (request !== cameraRequest) return;
+        stopCamera(error.name === "NotAllowedError"
+          ? "Camera permission was denied. You can continue without it or allow access in browser settings."
+          : "Camera unavailable. You can continue without it or connect a camera and retry.");
+      }
+    });
 
     function stopMicrophone() {
       if (meterFrame) cancelAnimationFrame(meterFrame);
@@ -412,6 +467,7 @@
             clearTimeout(interviewTimer);
             window.speechSynthesis?.cancel();
             stopMicrophone();
+            stopCamera();
           }
           else speakQuestion(result.question);
         } catch (error) { showInterviewError(error.message); }
@@ -432,9 +488,10 @@
       clearTimeout(interviewTimer);
       window.speechSynthesis?.cancel();
       stopMicrophone();
+      stopCamera();
       document.querySelector("#interview-state").textContent = "Interview complete.";
     });
-    window.addEventListener("pagehide", () => { activeRecognition?.abort(); window.speechSynthesis?.cancel(); stopMicrophone(); });
+    window.addEventListener("pagehide", () => { activeRecognition?.abort(); window.speechSynthesis?.cancel(); stopMicrophone(); stopCamera(); });
 
   </script>
 </body>

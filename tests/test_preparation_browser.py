@@ -25,9 +25,12 @@ def write_pdf(path: Path, text: str | None) -> None:
 
 
 class ControlledOpenAIHandler(BaseHTTPRequestHandler):
+    requests = []
+
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         request = json.loads(self.rfile.read(length))
+        self.requests.append(request)
         if request["model"] != "gpt-6-luna":
             self.send_error(400, "Unexpected model")
             return
@@ -381,3 +384,102 @@ def test_concurrent_answers_cannot_exceed_follow_up_limit(browser_app):
     assert result["follow_ups_used"] == 1
     assert result["turns"].count({"speaker": "Candidate", "text": "slow answer"}) == 1
     assert len(result["turns"]) == 3
+
+
+def test_camera_preview_stays_local_during_interview_and_stops_on_completion(browser_app):
+    page, base_url, _ = browser_app
+    page = page.context.browser.new_page()
+    ControlledOpenAIHandler.requests.clear()
+    saved = page.request.post(f"{base_url}/api/preparations", data={
+        "target_role": "Backend Engineer", "experience_level": "mid-level",
+        "job_description": "", "resume_text": "I led a payment API migration.",
+    }).json()
+    page.add_init_script("""window.SpeechRecognition = class {
+      start() { setTimeout(() => this.onresult({results: [[{transcript: 'I used idempotency keys'}]]}), 10); }
+      stop() {} abort() {}
+    };""")
+    requests = []
+    page.on("request", lambda request: requests.append((request.url, request.method, request.post_data)) if request.method != "GET" else None)
+    page.goto(base_url)
+    page.get_by_role("button", name="Enable camera preview").click()
+    video = page.locator("#camera-preview")
+    page.wait_for_function("document.querySelector('#camera-preview').videoWidth > 0")
+    video.evaluate("video => window.previewTrack = video.srcObject.getVideoTracks()[0]")
+    assert video.is_visible()
+    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Start 10-minute interview").click()
+    page.get_by_text("Interviewer: Tell me about the payment service you built.").wait_for()
+    assert video.evaluate("video => video.srcObject.getVideoTracks()[0].readyState") == "live"
+    page.get_by_role("button", name="Speak answer").click()
+    page.get_by_text("Interviewer: What trade-off did you make in the payment API migration?").wait_for()
+    page.get_by_role("button", name="Finish interview").click()
+    page.get_by_text("Interview complete.", exact=True).wait_for()
+    assert video.evaluate("video => video.srcObject === null")
+    assert page.evaluate("window.previewTrack.readyState") == "ended"
+    assert page.get_by_text("Camera preview: off").is_visible()
+    assert requests
+    for url, method, data in requests:
+        assert url.startswith(base_url + "/api/") and method == "POST"
+        payload = json.loads(data or "{}")
+        assert set(payload) <= {"preparation_id", "text"}
+    assert len(ControlledOpenAIHandler.requests) == 2
+    for provider_request in ControlledOpenAIHandler.requests:
+        assert set(provider_request) == {"model", "input", "max_output_tokens"}
+        assert all(isinstance(message["content"], str) for message in provider_request["input"])
+        context = json.loads(provider_request["input"][1]["content"])
+        assert set(context) == {"role", "experience", "job_description", "resume", "latest_answer", "question_type"}
+    assert saved["id"]
+    page.close()
+
+
+def test_camera_denial_does_not_block_spoken_interview(browser_app):
+    page, base_url, _ = browser_app
+    browser = page.context.browser.browser_type.launch(
+        headless=True, executable_path=page.context.browser.browser_type.executable_path,
+        args=["--use-fake-device-for-media-stream"],
+    )
+    context = browser.new_context(permissions=["microphone"])
+    page = context.new_page()
+    page.request.post(f"{base_url}/api/preparations", data={
+        "target_role": "Backend Engineer", "experience_level": "mid-level",
+        "job_description": "", "resume_text": "I led a payment API migration.",
+    })
+    page.add_init_script("window.SpeechRecognition = class { start() {} abort() {} };")
+    page.goto(base_url)
+    page.get_by_role("button", name="Enable camera preview").click()
+    page.get_by_text("Camera permission was denied", exact=False).wait_for()
+    assert page.get_by_role("button", name="Start 10-minute interview").is_enabled()
+    assert page.get_by_role("button", name="Save preparation").is_enabled()
+    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Start 10-minute interview").click()
+    page.get_by_text("Interviewer: Tell me about the payment service you built.").wait_for()
+    page.get_by_role("button", name="Finish interview").click()
+    page.get_by_text("Interview complete.", exact=True).wait_for()
+    page.close()
+    browser.close()
+
+
+def test_camera_disable_loss_and_leaving_release_capture(browser_app):
+    page, base_url, _ = browser_app
+    page = page.context.browser.new_page()
+    page.goto(base_url)
+    page.get_by_role("button", name="Enable camera preview").click()
+    page.wait_for_function("document.querySelector('#camera-preview').videoWidth > 0")
+    page.locator("#camera-preview").evaluate("video => window.track = video.srcObject.getVideoTracks()[0]")
+    page.get_by_role("button", name="Disable camera preview").click()
+    assert page.evaluate("window.track.readyState") == "ended"
+    page.get_by_role("button", name="Enable camera preview").click()
+    page.wait_for_function("document.querySelector('#camera-preview').srcObject !== null")
+    page.locator("#camera-preview").evaluate("""video => {
+      window.track = video.srcObject.getVideoTracks()[0];
+      window.track.stop();
+      window.track.dispatchEvent(new Event('ended'));
+    }""")
+    page.get_by_text("Camera connection lost", exact=False).wait_for()
+    assert page.get_by_role("button", name="Start 10-minute interview").is_enabled()
+    page.get_by_role("button", name="Enable camera preview").click()
+    page.wait_for_function("document.querySelector('#camera-preview').srcObject !== null")
+    page.locator("#camera-preview").evaluate("video => window.track = video.srcObject.getVideoTracks()[0]")
+    page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+    assert page.evaluate("window.track.readyState") == "ended"
+    page.close()
