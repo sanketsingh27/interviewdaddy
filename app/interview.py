@@ -97,6 +97,33 @@ interview_graph = graph_builder.compile()
 
 
 
+def remaining_seconds(row: sqlite3.Row) -> float:
+    now = datetime.fromisoformat(row["paused_at"]) if row["paused_at"] else datetime.now(timezone.utc)
+    elapsed = (now - datetime.fromisoformat(row["started_at"])).total_seconds() - row["paused_seconds"]
+    return max(0, DURATION_MINUTES * 60 - elapsed)
+
+
+def set_paused(interview_id: str, paused: bool) -> dict:
+    with connect_database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Interview not found.")
+        if row["status"] == "completed":
+            return interview_dict(row)
+        if row["processing"]:
+            raise HTTPException(status_code=409, detail="Wait for the current response before pausing.")
+        now = datetime.now(timezone.utc)
+        if not row["paused_at"] and remaining_seconds(row) <= 0:
+            db.execute("UPDATE interviews SET status = 'completed' WHERE id = ?", (interview_id,))
+        elif paused and not row["paused_at"]:
+            db.execute("UPDATE interviews SET paused_at = ? WHERE id = ?", (now.isoformat(), interview_id))
+        elif not paused and row["paused_at"]:
+            seconds = (now - datetime.fromisoformat(row["paused_at"])).total_seconds()
+            db.execute("UPDATE interviews SET paused_at = NULL, paused_seconds = paused_seconds + ? WHERE id = ?", (max(0, seconds), interview_id))
+        return interview_dict(db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone())
+
+
 def interview_dict(row: sqlite3.Row) -> dict:
     turns = json.loads(row["turns"])
     evidence = []
@@ -104,7 +131,7 @@ def interview_dict(row: sqlite3.Row) -> dict:
         if turn.get("assistance"):
             answer = next((later["text"] for later in turns[index + 1:] if later["speaker"] == "Candidate" and not later.get("action")), None)
             evidence.append({**turn, "answer": answer})
-    return {"id": row["id"], "preparation_id": row["preparation_id"], "status": row["status"], "question": row["question"], "duration_minutes": DURATION_MINUTES, "started_at": row["started_at"], "follow_ups_used": row["follow_ups_used"], "turns": turns, "assessment_evidence": evidence}
+    return {"id": row["id"], "preparation_id": row["preparation_id"], "status": "paused" if row["status"] == "active" and row["paused_at"] else row["status"], "question": row["question"], "duration_minutes": DURATION_MINUTES, "started_at": row["started_at"], "remaining_seconds": remaining_seconds(row), "processing": bool(row["processing"]), "follow_ups_used": row["follow_ups_used"], "turns": turns, "assessment_evidence": evidence}
 
 def create_interview(preparation_id: str) -> dict:
     with connect_database() as db:
@@ -132,13 +159,13 @@ def submit_answer(interview_id: str, answer: str) -> dict:
         row = db.execute("SELECT i.*, p.resume_text, p.target_role, p.experience_level, p.job_description FROM interviews i JOIN preparations p ON p.id = i.preparation_id WHERE i.id = ?", (interview_id,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Interview not found.")
-        if row["status"] != "active":
-            raise HTTPException(status_code=409, detail="This interview is complete; no further questions are available.")
+        if row["status"] != "active" or row["paused_at"]:
+            raise HTTPException(status_code=409, detail="This interview is paused or complete.")
         if row["processing"]:
             raise HTTPException(status_code=409, detail="The follow-up is still being generated. Wait for it before answering again.")
         turns = json.loads(row["turns"])
         turns.append({"speaker": "Candidate", "text": answer})
-        expired = datetime.now(timezone.utc) - datetime.fromisoformat(row["started_at"]) >= timedelta(minutes=DURATION_MINUTES)
+        expired = remaining_seconds(row) <= 0
         if expired:
             db.execute("UPDATE interviews SET turns = ?, status = 'completed', processing = 0 WHERE id = ?", (json.dumps(turns), interview_id))
             row = db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
@@ -180,7 +207,7 @@ def submit_answer(interview_id: str, answer: str) -> dict:
             raise HTTPException(status_code=404, detail="Interview not found.")
         if row["status"] != "active" or not row["processing"]:
             return interview_dict(row)
-        expired = datetime.now(timezone.utc) - datetime.fromisoformat(row["started_at"]) >= timedelta(minutes=DURATION_MINUTES)
+        expired = remaining_seconds(row) <= 0
         if expired:
             db.execute("UPDATE interviews SET status = 'completed', processing = 0 WHERE id = ?", (interview_id,))
         else:
@@ -198,9 +225,9 @@ def handle_action(interview_id: str, action: str) -> dict:
         row = db.execute("SELECT i.*, p.resume_text, p.target_role, p.experience_level, p.job_description FROM interviews i JOIN preparations p ON p.id = i.preparation_id WHERE i.id = ?", (interview_id,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Interview not found.")
-        if row["status"] != "active" or row["processing"]:
-            raise HTTPException(status_code=409, detail="Interview is complete or processing a turn.")
-        if datetime.now(timezone.utc) - datetime.fromisoformat(row["started_at"]) >= timedelta(minutes=DURATION_MINUTES):
+        if row["status"] != "active" or row["paused_at"] or row["processing"]:
+            raise HTTPException(status_code=409, detail="Interview is paused, complete or processing a turn.")
+        if remaining_seconds(row) <= 0:
             db.execute("UPDATE interviews SET status = 'completed' WHERE id = ?", (interview_id,))
             return interview_dict(db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone())
         if action == "hint":
@@ -235,7 +262,7 @@ def handle_action(interview_id: str, action: str) -> dict:
             raise HTTPException(status_code=404, detail="Interview not found.")
         if row["status"] != "active":
             return interview_dict(row)
-        if datetime.now(timezone.utc) - datetime.fromisoformat(row["started_at"]) >= timedelta(minutes=DURATION_MINUTES):
+        if remaining_seconds(row) <= 0:
             db.execute("UPDATE interviews SET status = 'completed', processing = 0 WHERE id = ?", (interview_id,))
             return interview_dict(db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone())
         turns = json.loads(row["turns"])
@@ -264,8 +291,8 @@ def finish_interview(interview_id: str) -> dict:
 def get_interview(interview_id: str) -> dict:
     with connect_database() as db:
         row = db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
-        if row is not None and row["status"] == "active":
-            expired = datetime.now(timezone.utc) - datetime.fromisoformat(row["started_at"]) >= timedelta(minutes=DURATION_MINUTES)
+        if row is not None and row["status"] == "active" and not row["paused_at"]:
+            expired = remaining_seconds(row) <= 0
             if expired:
                 db.execute("UPDATE interviews SET status = 'completed', processing = 0 WHERE id = ?", (interview_id,))
                 row = db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()

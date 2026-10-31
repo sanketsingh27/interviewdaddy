@@ -128,6 +128,7 @@
         <button id="speaker-check" class="secondary" type="button">Test speaker</button>
         <button id="start-interview" type="button">Start 10-minute interview</button>
       </div>
+      <p id="connection-state" role="status" aria-live="polite">Connection: ready</p>
       <p id="capture-state" role="status">Microphone capture: off</p>
       <label for="mic-level">Microphone level</label>
       <progress id="mic-level" max="100" value="0">0%</progress>
@@ -136,6 +137,8 @@
         <ol id="transcript" aria-label="Saved interview transcript"></ol>
         <div class="actions">
           <button id="answer-button" type="button">Speak answer</button>
+          <button id="pause-interview" class="secondary" type="button">Pause interview</button>
+          <button id="recover-interview" class="secondary" type="button" hidden>Recover connection</button>
           <button id="stop-playback" class="secondary" type="button">Interrupt playback</button>
           <button class="secondary interview-action" data-action="repeat" type="button">Repeat question</button>
           <button class="secondary interview-action" data-action="rephrase" type="button">Rephrase question</button>
@@ -313,6 +316,92 @@
     let activeRecognition = null;
     let turnPending = false;
     let playbackVersion = 0;
+    let paused = false;
+    let recovering = false;
+    const pauseButton = document.querySelector("#pause-interview");
+    const recoverButton = document.querySelector("#recover-interview");
+    const connectionState = document.querySelector("#connection-state");
+
+    function stopCapture() {
+      const recognition = activeRecognition;
+      activeRecognition = null;
+      recognition?.abort();
+      stopMicrophone();
+      clearTimeout(interviewTimer);
+      playbackVersion++;
+      stopPlayback();
+    }
+
+    function renderInterview(result, restored = false) {
+      activeInterview = result.status === "completed" ? null : result.id;
+      paused = result.status === "paused";
+      document.querySelector("#transcript").dataset.interviewId = result.id;
+      document.querySelector("#conversation").hidden = false;
+      addTranscript(result.turns);
+      pauseButton.textContent = paused ? "Resume interview" : "Pause interview";
+      pauseButton.disabled = result.status === "completed" || result.processing;
+      answerButton.disabled = result.status !== "active" || result.processing || recovering;
+      document.querySelectorAll(".interview-action").forEach(button => button.disabled = answerButton.disabled);
+      document.querySelector("#finish-interview").disabled = result.status === "completed";
+      clearTimeout(interviewTimer);
+      if (result.status === "completed") {
+        stopCapture();
+        interviewState.textContent = "Interview complete.";
+      } else if (paused) {
+        interviewState.textContent = "Paused. Resume when you are ready.";
+      } else if (result.processing) {
+        interviewState.textContent = "Recovering the response…";
+        setTimeout(recoverInterview, 500);
+      } else {
+        setInterviewState("ready");
+        interviewTimer = setTimeout(() => document.querySelector("#finish-interview").click(), result.remaining_seconds * 1000);
+      }
+      if (restored && sessionStorage.getItem("interview-partial") === result.id) {
+        showInterviewError("An interrupted answer may have been lost. Check the saved transcript and speak it again if needed.");
+        sessionStorage.removeItem("interview-partial");
+      }
+    }
+
+    async function recoverInterview() {
+      const id = sessionStorage.getItem("interview-id");
+      if (!id) return;
+      recovering = true;
+      stopCapture();
+      connectionState.textContent = "Connection: recovering…";
+      try {
+        const result = await responseData(await fetch(`/api/interviews/${encodeURIComponent(id)}`));
+        recovering = false;
+        recoverButton.hidden = true;
+        connectionState.textContent = "Connection: connected";
+        renderInterview(result, true);
+      } catch (error) {
+        recovering = true;
+        answerButton.disabled = true;
+        pauseButton.disabled = true;
+        document.querySelectorAll(".interview-action").forEach(button => button.disabled = true);
+        recoverButton.hidden = false;
+        connectionState.textContent = "Connection lost. Recover connection to check saved answers.";
+      }
+    }
+    recoverButton.addEventListener("click", recoverInterview);
+    window.addEventListener("online", recoverInterview);
+    window.addEventListener("offline", () => { if (activeInterview) recoverInterview(); });
+
+    pauseButton.addEventListener("click", async () => {
+      if (!activeInterview || turnPending || recovering) return;
+      const id = activeInterview;
+      if (!paused && activeRecognition) showInterviewError("Your interrupted answer was not saved. Please speak it again after resuming.");
+      stopCapture();
+      pauseButton.disabled = true;
+      try {
+        const result = await responseData(await fetch(`/api/interviews/${id}/${paused ? "resume" : "pause"}`, {method: "POST"}));
+        renderInterview(result);
+        if (result.status === "active") speakQuestion(result.question);
+      } catch (error) {
+        showInterviewError(error.message);
+        await recoverInterview();
+      }
+    });
     let currentUtterance = null;
     const answerButton = document.querySelector("#answer-button");
     const interviewState = document.querySelector("#interview-state");
@@ -328,6 +417,7 @@
       interviewState.textContent = message;
       answerButton.textContent = label;
       answerButton.disabled = disabled;
+      pauseButton.disabled = state === "thinking" || recovering || !activeInterview;
     }
 
     function stopPlayback() {
@@ -470,6 +560,8 @@
       if (!Recognition) return showInterviewError("Speech recognition is not supported. Use a supported browser such as Chrome or Edge.");
       if (!("speechSynthesis" in window)) return showInterviewError("Speech playback is not supported. Use a current browser with speech synthesis.");
       if (!currentPreparationId) return showInterviewError("Save a preparation before starting the interview.");
+      document.querySelector("#conversation").hidden = true;
+      document.querySelector("#transcript").replaceChildren();
       try {
         if (!microphoneStream) await checkMicrophone();
         if (!microphoneStream) return;
@@ -477,23 +569,19 @@
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ preparation_id: currentPreparationId }),
         }));
-        activeInterview = result.id;
-        document.querySelector("#transcript").dataset.interviewId = result.id;
-        document.querySelector("#conversation").hidden = false;
-        addTranscript(result.turns);
-        const remainingMs = Math.max(0, Date.parse(result.started_at) + result.duration_minutes * 60_000 - Date.now());
-        interviewTimer = setTimeout(() => document.querySelector("#finish-interview").click(), remainingMs);
-        setInterviewState("ready");
+        sessionStorage.setItem("interview-id", result.id);
+        renderInterview(result);
+        connectionState.textContent = "Connection: connected";
         speakQuestion(result.question);
       } catch (error) { showInterviewError(error.message); }
     });
     document.querySelector("#stop-playback").addEventListener("click", () => {
       playbackVersion++;
       stopPlayback();
-      if (activeInterview && !turnPending && !activeRecognition) setInterviewState("ready");
+      if (activeInterview && !paused && !turnPending && !activeRecognition) setInterviewState("ready");
     });
     document.querySelectorAll(".interview-action").forEach(button => button.addEventListener("click", async () => {
-      if (!activeInterview || turnPending || activeRecognition) return;
+      if (!activeInterview || paused || recovering || turnPending || activeRecognition) return;
       stopPlayback();
       const interview = activeInterview;
       const playback = playbackVersion;
@@ -509,11 +597,11 @@
         if (result.status === "completed") document.querySelector("#finish-interview").click();
         else if (playback === playbackVersion) speakQuestion(result.spoken);
         else setInterviewState("ready");
-      } catch (error) { if (activeInterview === interview) setInterviewState("ready"); showInterviewError(error.message); }
+      } catch (error) { showInterviewError(error.message); await recoverInterview(); }
       finally { turnPending = false; }
     }));
     document.querySelector("#answer-button").addEventListener("click", () => {
-      if (!activeInterview || turnPending || activeRecognition) return;
+      if (!activeInterview || paused || recovering || turnPending || activeRecognition) return;
       document.querySelector("#interview-error").hidden = true;
       stopPlayback();
       const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -522,7 +610,11 @@
       recognition.onend = () => {
         if (activeRecognition === recognition) {
           activeRecognition = null;
-          if (!submitted && activeInterview === interview) setInterviewState("ready");
+          if (!submitted && activeInterview === interview && !paused && !recovering) {
+            sessionStorage.removeItem("interview-partial");
+            document.querySelector("#capture-state").textContent = "Microphone capture: off";
+            setInterviewState("ready");
+          }
         }
       };
       recognition.lang = "en-US";
@@ -530,38 +622,38 @@
       let submitted = false;
       const interview = activeInterview;
       const playback = playbackVersion;
-      recognition.onstart = () => { if (activeInterview === interview) setInterviewState("listening"); };
+      recognition.onstart = () => { if (activeInterview === interview) { document.querySelector("#capture-state").textContent = "Microphone capture: on (listening)"; setInterviewState("listening"); } };
       recognition.onresult = async event => {
-        if (submitted || activeInterview !== interview) return;
+        if (submitted || activeInterview !== interview || activeRecognition !== recognition || paused) return;
         submitted = true;
         turnPending = true;
         setInterviewState("thinking");
         const text = event.results[0][0].transcript;
         recognition.stop();
+        stopMicrophone();
         if (activeRecognition === recognition) activeRecognition = null;
         try {
           const result = await responseData(await fetch(`/api/interviews/${interview}/turns`, {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
           }));
+          sessionStorage.removeItem("interview-partial");
           if (activeInterview !== interview) return;
           addTranscript(result.turns);
-          if (result.status === "completed") interviewState.textContent = result.notice || "Interview complete.";
           if (result.status === "completed") {
-            activeInterview = null;
-            activeRecognition?.abort();
-            activeRecognition = null;
-            clearTimeout(interviewTimer);
-            stopPlayback();
-            stopMicrophone();
+            renderInterview(result);
+            if (result.notice) interviewState.textContent = result.notice;
             stopCamera();
           }
           else if (playback === playbackVersion) speakQuestion(result.question);
           else setInterviewState("ready");
-        } catch (error) { if (activeInterview === interview) setInterviewState("ready"); showInterviewError(error.message); }
+        } catch (error) { showInterviewError(error.message); await recoverInterview(); }
         finally { turnPending = false; }
       };
       recognition.onerror = event => {
-        if (activeRecognition === recognition) activeRecognition = null;
+        if (activeRecognition !== recognition) return;
+        activeRecognition = null;
+        document.querySelector("#capture-state").textContent = "Microphone capture: off";
+        sessionStorage.removeItem("interview-partial");
         if (activeInterview === interview) setInterviewState("ready");
         const messages = {
           "not-allowed": "Microphone permission was denied. Allow access in browser settings and retry.",
@@ -571,6 +663,7 @@
         };
         showInterviewError(messages[event.error] || `Speech recognition failed (${event.error}). Check your microphone and retry.`);
       };
+      sessionStorage.setItem("interview-partial", interview);
       activeRecognition = recognition;
       try {
         setInterviewState("listening");
@@ -583,20 +676,19 @@
     });
     document.querySelector("#finish-interview").addEventListener("click", async () => {
       const interview = activeInterview;
-      activeInterview = null;
-      playbackVersion++;
-      if (interview) {
+      if (!interview) return;
+      stopCapture();
+      try {
         const result = await responseData(await fetch(`/api/interviews/${interview}/finish`, { method: "POST" }));
-        addTranscript(result.turns);
+        sessionStorage.removeItem("interview-partial");
+        renderInterview(result);
+        stopCamera();
+      } catch (error) {
+        showInterviewError(error.message);
+        await recoverInterview();
       }
-      activeRecognition?.abort();
-      activeRecognition = null;
-      clearTimeout(interviewTimer);
-      stopPlayback();
-      stopMicrophone();
-      stopCamera();
-      document.querySelector("#interview-state").textContent = "Interview complete.";
     });
+    if (sessionStorage.getItem("interview-id")) recoverInterview();
     window.addEventListener("pagehide", () => { activeRecognition?.abort(); window.speechSynthesis?.cancel(); stopMicrophone(); stopCamera(); });
 
   </script>

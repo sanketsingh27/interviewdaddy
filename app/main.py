@@ -61,6 +61,20 @@ def initialize_database() -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(interviews)")}
         if "processing" not in columns:
             connection.execute("ALTER TABLE interviews ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
+        if "paused_at" not in columns:
+            connection.execute("ALTER TABLE interviews ADD COLUMN paused_at TEXT")
+            connection.execute("ALTER TABLE interviews ADD COLUMN paused_seconds REAL NOT NULL DEFAULT 0")
+
+@app.post("/api/interviews/{interview_id}/pause")
+def pause_interview(interview_id: str) -> dict:
+    from app.interview import set_paused
+    return set_paused(interview_id, True)
+
+@app.post("/api/interviews/{interview_id}/resume")
+def resume_interview(interview_id: str) -> dict:
+    from app.interview import set_paused
+    return set_paused(interview_id, False)
+
 class InterviewStartInput(BaseModel):
     preparation_id: str
 

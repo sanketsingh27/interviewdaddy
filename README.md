@@ -47,6 +47,8 @@ During the interview, the status shows when the interviewer is speaking, listeni
 
 Use **Interrupt playback** or start speaking to stop the current question. You can request repetition, rephrasing, thinking time, or a hint using the on-screen controls. Hints are labelled in the transcript and retained as assessment evidence; they are not presented as independent answers. Recognition errors can appear in the transcript.
 
+Use **Pause interview** to stop microphone capture and playback; paused time does not count toward the 10-minute limit. Resume returns to the saved question. Refreshing the same browser tab restores the saved transcript and session state. If the connection is lost, use **Recover connection** or wait for reconnection; check the saved transcript before re-speaking an interrupted answer. Partial speech is not saved as an answer. Time continues while disconnected unless you paused successfully before the interruption.
+
 The interviewer will not start without a saved preparation and configured API key. Keep the app bound to loopback and do not expose it publicly.
 
 ## Run browser checks
