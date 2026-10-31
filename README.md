@@ -43,6 +43,8 @@ Set `OPENAI_API_KEY` in the repository-root `.env` file before launching. `./dev
 
 Use a supported browser with microphone and speech synthesis support. Choose **Check microphone** and **Test speaker** before starting. Allow microphone permission when asked. Browser recognition support and audio processing vary by browser; check its privacy policy.
 
+During the interview, the status shows when the interviewer is speaking, listening, or thinking; the answer button is disabled while listening or processing. If recognition fails, check the displayed recovery guidance and retry.
+
 Use **Interrupt playback** or start speaking to stop the current question. You can request repetition, rephrasing, thinking time, or a hint using the on-screen controls. Hints are labelled in the transcript and retained as assessment evidence; they are not presented as independent answers. Recognition errors can appear in the transcript.
 
 The interviewer will not start without a saved preparation and configured API key. Keep the app bound to loopback and do not expose it publicly.

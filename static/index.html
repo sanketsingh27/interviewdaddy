@@ -313,6 +313,27 @@
     let activeRecognition = null;
     let turnPending = false;
     let playbackVersion = 0;
+    let currentUtterance = null;
+    const answerButton = document.querySelector("#answer-button");
+    const interviewState = document.querySelector("#interview-state");
+
+    function setInterviewState(state) {
+      const states = {
+        ready: ["Ready for your answer.", "Speak answer", false],
+        listening: ["Listening to your answer.", "Listening…", true],
+        thinking: ["Thinking about your answer…", "Thinking…", true],
+        speaking: ["Interviewer is speaking.", "Speak answer", false],
+      };
+      const [message, label, disabled] = states[state];
+      interviewState.textContent = message;
+      answerButton.textContent = label;
+      answerButton.disabled = disabled;
+    }
+
+    function stopPlayback() {
+      currentUtterance = null;
+      window.speechSynthesis?.cancel();
+    }
     let meterFrame = null;
     const cameraToggle = document.querySelector("#camera-toggle");
     const cameraPreview = document.querySelector("#camera-preview");
@@ -418,8 +439,24 @@
         showInterviewError("Speech playback is not supported in this browser. Try a current Chrome or Edge browser.");
         return;
       }
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(question));
+      stopPlayback();
+      const utterance = new SpeechSynthesisUtterance(question);
+      currentUtterance = utterance;
+      utterance.onstart = () => { if (currentUtterance === utterance && activeInterview) setInterviewState("speaking"); };
+      utterance.onend = () => {
+        if (currentUtterance === utterance && activeInterview) {
+          currentUtterance = null;
+          setInterviewState("ready");
+        }
+      };
+      utterance.onerror = () => {
+        if (currentUtterance === utterance && activeInterview) {
+          currentUtterance = null;
+          setInterviewState("ready");
+          showInterviewError("Playback failed. Check your speaker or read the question in the transcript.");
+        }
+      };
+      window.speechSynthesis.speak(utterance);
     }
 
     document.querySelector("#mic-check").addEventListener("click", checkMicrophone);
@@ -446,17 +483,22 @@
         addTranscript(result.turns);
         const remainingMs = Math.max(0, Date.parse(result.started_at) + result.duration_minutes * 60_000 - Date.now());
         interviewTimer = setTimeout(() => document.querySelector("#finish-interview").click(), remainingMs);
-        document.querySelector("#interview-state").textContent = `Interview active. ${result.duration_minutes} minutes maximum.`;
+        setInterviewState("ready");
         speakQuestion(result.question);
       } catch (error) { showInterviewError(error.message); }
     });
-    document.querySelector("#stop-playback").addEventListener("click", () => { playbackVersion++; window.speechSynthesis?.cancel(); });
+    document.querySelector("#stop-playback").addEventListener("click", () => {
+      playbackVersion++;
+      stopPlayback();
+      if (activeInterview && !turnPending && !activeRecognition) setInterviewState("ready");
+    });
     document.querySelectorAll(".interview-action").forEach(button => button.addEventListener("click", async () => {
       if (!activeInterview || turnPending || activeRecognition) return;
-      window.speechSynthesis?.cancel();
+      stopPlayback();
       const interview = activeInterview;
       const playback = playbackVersion;
       turnPending = true;
+      setInterviewState("thinking");
       try {
         const result = await responseData(await fetch(`/api/interviews/${interview}/actions`, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -466,25 +508,34 @@
         addTranscript(result.turns);
         if (result.status === "completed") document.querySelector("#finish-interview").click();
         else if (playback === playbackVersion) speakQuestion(result.spoken);
-      } catch (error) { showInterviewError(error.message); }
+        else setInterviewState("ready");
+      } catch (error) { if (activeInterview === interview) setInterviewState("ready"); showInterviewError(error.message); }
       finally { turnPending = false; }
     }));
     document.querySelector("#answer-button").addEventListener("click", () => {
       if (!activeInterview || turnPending || activeRecognition) return;
-      window.speechSynthesis?.cancel();
+      document.querySelector("#interview-error").hidden = true;
+      stopPlayback();
       const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!Recognition) return showInterviewError("Speech recognition is not supported in this browser.");
       const recognition = new Recognition();
-      recognition.onend = () => { if (activeRecognition === recognition) activeRecognition = null; };
+      recognition.onend = () => {
+        if (activeRecognition === recognition) {
+          activeRecognition = null;
+          if (!submitted && activeInterview === interview) setInterviewState("ready");
+        }
+      };
       recognition.lang = "en-US";
       recognition.interimResults = false;
       let submitted = false;
       const interview = activeInterview;
       const playback = playbackVersion;
+      recognition.onstart = () => { if (activeInterview === interview) setInterviewState("listening"); };
       recognition.onresult = async event => {
         if (submitted || activeInterview !== interview) return;
         submitted = true;
         turnPending = true;
+        setInterviewState("thinking");
         const text = event.results[0][0].transcript;
         recognition.stop();
         if (activeRecognition === recognition) activeRecognition = null;
@@ -494,25 +545,41 @@
           }));
           if (activeInterview !== interview) return;
           addTranscript(result.turns);
-          document.querySelector("#interview-state").textContent = result.notice || (result.status === "completed" ? "Interview complete." : "Answer saved.");
+          if (result.status === "completed") interviewState.textContent = result.notice || "Interview complete.";
           if (result.status === "completed") {
             activeInterview = null;
             activeRecognition?.abort();
             activeRecognition = null;
             clearTimeout(interviewTimer);
-            window.speechSynthesis?.cancel();
+            stopPlayback();
             stopMicrophone();
             stopCamera();
           }
           else if (playback === playbackVersion) speakQuestion(result.question);
-        } catch (error) { showInterviewError(error.message); }
+          else setInterviewState("ready");
+        } catch (error) { if (activeInterview === interview) setInterviewState("ready"); showInterviewError(error.message); }
         finally { turnPending = false; }
       };
-      recognition.onerror = event => showInterviewError(event.error === "not-allowed"
-        ? "Microphone permission was denied. Allow access in browser settings and retry."
-        : `Speech recognition failed (${event.error}). Check your microphone and retry.`);
+      recognition.onerror = event => {
+        if (activeRecognition === recognition) activeRecognition = null;
+        if (activeInterview === interview) setInterviewState("ready");
+        const messages = {
+          "not-allowed": "Microphone permission was denied. Allow access in browser settings and retry.",
+          "no-speech": "No speech was heard. Check your microphone level and try speaking again.",
+          "audio-capture": "No microphone is available. Connect or enable one, then retry.",
+          "network": "Speech recognition could not connect. Check your network or try another supported browser.",
+        };
+        showInterviewError(messages[event.error] || `Speech recognition failed (${event.error}). Check your microphone and retry.`);
+      };
       activeRecognition = recognition;
-      recognition.start();
+      try {
+        setInterviewState("listening");
+        recognition.start();
+      } catch (error) {
+        activeRecognition = null;
+        setInterviewState("ready");
+        showInterviewError("Speech recognition could not start. Check your microphone and retry.");
+      }
     });
     document.querySelector("#finish-interview").addEventListener("click", async () => {
       const interview = activeInterview;
@@ -525,7 +592,7 @@
       activeRecognition?.abort();
       activeRecognition = null;
       clearTimeout(interviewTimer);
-      window.speechSynthesis?.cancel();
+      stopPlayback();
       stopMicrophone();
       stopCamera();
       document.querySelector("#interview-state").textContent = "Interview complete.";
