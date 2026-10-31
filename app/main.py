@@ -24,6 +24,7 @@ app = FastAPI(title="InterviewDaddy", docs_url=None, redoc_url=None)
 
 
 def connect_database() -> sqlite3.Connection:
+    """Open a SQLite connection with row access and foreign keys enabled."""
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
@@ -32,6 +33,7 @@ def connect_database() -> sqlite3.Connection:
 
 
 def initialize_database() -> None:
+    """Create the preparations table if it does not already exist."""
     with connect_database() as connection:
         connection.execute(
             """CREATE TABLE IF NOT EXISTS preparations (
@@ -48,6 +50,7 @@ def initialize_database() -> None:
 
 @app.on_event("startup")
 def startup() -> None:
+    """Initialize persistent storage when the application starts."""
     initialize_database()
 
 
@@ -59,6 +62,7 @@ class PreparationInput(BaseModel):
 
 
 def preparation_to_dict(row: sqlite3.Row) -> dict[str, str]:
+    """Convert a preparation database row into its API representation."""
     return {
         "id": row["id"],
         "target_role": row["target_role"],
@@ -71,6 +75,7 @@ def preparation_to_dict(row: sqlite3.Row) -> dict[str, str]:
 
 
 def validate_preparation(preparation: PreparationInput) -> PreparationInput:
+    """Trim and validate preparation fields before database operations."""
     target_role = preparation.target_role.strip()
     resume_text = preparation.resume_text.strip()
     if not target_role:
@@ -89,11 +94,13 @@ def validate_preparation(preparation: PreparationInput) -> PreparationInput:
 
 @app.get("/")
 def index() -> FileResponse:
+    """Serve the application homepage."""
     return FileResponse(ROOT / "static" / "index.html")
 
 
 @app.post("/api/extract")
 async def extract_resume(file: UploadFile = File(...)) -> dict[str, str]:
+    """Extract readable text from an uploaded PDF resume."""
     filename = (file.filename or "").lower()
     if not filename.endswith(".pdf") or file.content_type not in {"application/pdf", "application/octet-stream"}:
         raise HTTPException(status_code=415, detail="Choose a PDF file to extract resume text.")
@@ -138,6 +145,7 @@ async def extract_resume(file: UploadFile = File(...)) -> dict[str, str]:
 
 @app.get("/api/preparations")
 def list_preparations() -> list[dict[str, str]]:
+    """Return saved preparations ordered by most recently updated."""
     with connect_database() as connection:
         rows = connection.execute(
             "SELECT id, target_role, experience_level, updated_at FROM preparations ORDER BY updated_at DESC"
@@ -147,6 +155,7 @@ def list_preparations() -> list[dict[str, str]]:
 
 @app.post("/api/preparations", status_code=201)
 def save_preparation(preparation: PreparationInput) -> dict[str, str]:
+    """Validate and store a new preparation, then return its saved data."""
     preparation = validate_preparation(preparation)
     preparation_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -171,6 +180,7 @@ def save_preparation(preparation: PreparationInput) -> dict[str, str]:
 
 @app.put("/api/preparations/{preparation_id}")
 def update_preparation(preparation_id: str, preparation: PreparationInput) -> dict[str, str]:
+    """Update a saved preparation or raise 404 if it does not exist."""
     preparation = validate_preparation(preparation)
     timestamp = datetime.now(timezone.utc).isoformat()
     with connect_database() as connection:
@@ -194,6 +204,7 @@ def update_preparation(preparation_id: str, preparation: PreparationInput) -> di
 
 @app.get("/api/preparations/{preparation_id}")
 def get_preparation(preparation_id: str) -> dict[str, str]:
+    """Return one saved preparation or raise 404 if it does not exist."""
     with connect_database() as connection:
         row = connection.execute("SELECT * FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
     if row is None:
@@ -203,6 +214,7 @@ def get_preparation(preparation_id: str) -> dict[str, str]:
 
 @app.delete("/api/preparations/{preparation_id}", status_code=204)
 def delete_preparation(preparation_id: str) -> None:
+    """Delete a saved preparation or raise 404 if it does not exist."""
     with connect_database() as connection:
         cursor = connection.execute("DELETE FROM preparations WHERE id = ?", (preparation_id,))
     if cursor.rowcount == 0:

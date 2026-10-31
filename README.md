@@ -4,22 +4,16 @@ A local-only resume preparation app. There are no accounts, live AI calls, voice
 
 ## Start the app
 
-1. Use Python 3.11 or newer.
-2. From this directory, create and activate a virtual environment:
+Run the launcher from this directory:
 
-   ```sh
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+```sh
+./dev.sh
+```
 
-3. Install the app dependencies and start the local server:
-
-   ```sh
-   python -m pip install -r requirements.txt
-   uvicorn app.main:app --host 127.0.0.1 --port 8000
-   ```
-
-4. Open <http://127.0.0.1:8000> in your browser. Stop the server with `Ctrl+C`.
+It creates `.venv` if needed, installs or updates the dependencies from
+`requirements.txt`, and starts the app on an available local port. Uvicorn prints
+the URL to open in your browser (for example, `http://127.0.0.1:54321`). Stop
+the server with `Ctrl+C`.
 
 The server binds to loopback (`127.0.0.1`) so the app is available only on this device by default. Do not expose it to a network or public host without adding appropriate access controls.
 
