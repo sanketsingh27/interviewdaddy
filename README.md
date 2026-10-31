@@ -4,8 +4,15 @@ A local-only resume preparation and spoken interview app. There are no accounts 
 
 ## Start the app
 
-Run the launcher from this directory:
+If `.env` does not exist yet, create it from the template:
 
+```sh
+cp .env.example .env
+```
+
+Edit `OPENAI_API_KEY=` in `.env`. `./dev.sh` loads this file automatically. `.env` is git-ignored; never commit or share it.
+
+Run the launcher from this directory:
 ```sh
 ./dev.sh
 ```
