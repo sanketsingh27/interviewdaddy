@@ -4,10 +4,10 @@ A local-only resume preparation and spoken interview app. There are no accounts 
 
 ## Start the app
 
-If `.env` does not exist yet, create it from the template:
+Create or edit `.env` in the repository root:
 
 ```sh
-cp .env.example .env
+OPENAI_API_KEY=your-key
 ```
 
 Edit `OPENAI_API_KEY=` in `.env`. `./dev.sh` loads this file automatically. `.env` is git-ignored; never commit or share it.
@@ -35,7 +35,7 @@ Saved resume and job-description text remain in local SQLite until deletion. An 
 
 ## Run a spoken interview
 
-Set `OPENAI_API_KEY` in the server environment before launching the app. The key stays on the server. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow and allows up to 10 minutes, one opening question, and one answer-based follow-up. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If follow-up generation fails, the recognized answer remains saved and the interview completes.
+Set `OPENAI_API_KEY` in the repository-root `.env` file before launching. `./dev.sh` loads it server-side. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` if needed. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow and allows up to 10 minutes, one opening question, and one answer-based follow-up. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If follow-up generation fails, the recognized answer remains saved and the interview completes.
 
 Use a supported browser with microphone and speech synthesis support. Choose **Check microphone** and **Test speaker** before starting. Allow microphone permission when asked. Browser recognition support and audio processing vary by browser; check its privacy policy.
 

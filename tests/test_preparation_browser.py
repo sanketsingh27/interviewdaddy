@@ -28,6 +28,9 @@ class ControlledOpenAIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         request = json.loads(self.rfile.read(length))
+        if request["model"] != "gpt-6-luna":
+            self.send_error(400, "Unexpected model")
+            return
         context = json.loads(request["input"][1]["content"])
         if context["latest_answer"] == "trigger provider failure":
             self.send_error(503)
@@ -64,6 +67,7 @@ def browser_app(tmp_path_factory):
         port = listener.getsockname()[1]
 
     environment = os.environ.copy()
+    environment.pop("OPENAI_MODEL", None)
     environment["INTERVIEWDADDY_DATABASE"] = str(database)
     environment["OPENAI_API_KEY"] = "controlled-test-key"
     environment["OPENAI_BASE_URL"] = f"http://127.0.0.1:{provider.server_port}"

@@ -16,7 +16,7 @@ from app.main import connect_database
 
 DURATION_MINUTES = 10
 MAX_FOLLOW_UPS = 1
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
 
 
 class InterviewState(TypedDict):
@@ -53,7 +53,7 @@ def request_question(state: InterviewState) -> dict[str, str]:
     ]
     request = urllib.request.Request(
         os.environ.get("OPENAI_BASE_URL", "https://api.openai.com") + "/v1/responses",
-        data=json.dumps({"model": MODEL, "input": prompt, "max_output_tokens": 120}).encode(),
+        data=json.dumps({"model": OPENAI_MODEL, "input": prompt, "max_output_tokens": 120}).encode(),
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
