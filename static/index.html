@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8f7">
+  <link rel="icon" href="data:,">
+  <title>Prepare for your interview · InterviewDaddy</title>
+  <style>
+    :root { color-scheme: light; --ink: #17312d; --muted: #526763; --line: #cedbd7; --paper: #fff; --wash: #f3f7f5; --green: #176b55; --danger: #8e3026; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f6f8f7; color: var(--ink); font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(100% - 32px, 760px); margin: 48px auto 80px; }
+    header { margin-bottom: 28px; }
+    .eyebrow { color: var(--green); font-size: .78rem; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+    h1 { margin: 8px 0 6px; font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1.12; letter-spacing: -.04em; }
+    .intro { max-width: 58ch; margin: 0; color: var(--muted); }
+    .panel { padding: clamp(20px, 5vw, 34px); border: 1px solid var(--line); border-radius: 18px; background: var(--paper); box-shadow: 0 12px 36px #17312d0b; }
+    .privacy { margin-bottom: 28px; padding: 16px 18px; border-left: 4px solid var(--green); border-radius: 5px 12px 12px 5px; background: #edf5f1; }
+    .privacy p { margin: 0 0 7px; }
+    .privacy p:last-child { margin-bottom: 0; }
+    .privacy strong { color: #174e40; }
+    .section-heading { margin: 28px 0 12px; font-size: 1.05rem; }
+    .section-heading:first-child { margin-top: 0; }
+    .field { display: grid; gap: 7px; margin: 17px 0; }
+    label { font-weight: 650; }
+    input, select, textarea, button { font: inherit; }
+    input[type="file"], input[type="text"], select, textarea { width: 100%; border: 1px solid #9aada7; border-radius: 9px; background: #fff; color: var(--ink); }
+    input[type="file"], input[type="text"], select { min-height: 48px; padding: 9px 12px; }
+    textarea { min-height: 190px; padding: 12px; resize: vertical; }
+    .hint, .subtle { margin: 0; color: var(--muted); font-size: .9rem; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 22px; }
+    button { min-height: 44px; padding: 9px 16px; border: 1px solid var(--green); border-radius: 9px; background: var(--green); color: white; font-weight: 700; cursor: pointer; }
+    button:hover { background: #10543f; }
+    button.secondary { border-color: var(--line); background: white; color: var(--ink); }
+    button.secondary:hover { background: var(--wash); }
+    button.danger { border-color: #e2c6c2; background: white; color: var(--danger); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #e09b35; outline-offset: 3px; }
+    [role="status"] { min-height: 1.5em; color: var(--green); font-weight: 650; }
+    [role="alert"] { margin: 12px 0; padding: 11px 13px; border: 1px solid #e2b7b1; border-radius: 9px; background: #fff4f2; color: var(--danger); }
+    [hidden] { display: none !important; }
+    .saved-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+    .saved-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+    .saved-item p { margin: 0; }
+    .saved-item small { display: block; color: var(--muted); }
+    .saved-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    footer { margin: 20px 4px 0; color: var(--muted); font-size: .84rem; }
+    @media (max-width: 520px) { main { margin-top: 26px; } .saved-item { align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">InterviewDaddy · Local preparation</div>
+      <h1>Prepare for your interview</h1>
+      <p class="intro">Add your resume and the role you want. Review the extracted text so your preparation starts from your own experience.</p>
+    </header>
+
+    <section class="panel" aria-labelledby="privacy-title">
+      <div class="privacy">
+        <h2 id="privacy-title" class="section-heading">Your information stays in your control</h2>
+        <p><strong>Your resume and job description stay in this local app until you delete them.</strong> This app stores them in a SQLite database on this device.</p>
+        <p><strong>No AI provider is used during resume preparation.</strong> A later interview feature may send text to OpenAI for reasoning under the provider's policies. Downloaded copies and any provider retention are separate from deleting local data.</p>
+      </div>
+
+      <div id="error-message" role="alert" aria-live="assertive" hidden></div>
+      <p id="status-message" role="status" aria-live="polite"></p>
+
+      <h2 class="section-heading">1. Add your resume</h2>
+      <div class="field">
+        <label for="resume-file">Resume PDF</label>
+        <input id="resume-file" name="resume" type="file" accept="application/pdf,.pdf" aria-describedby="upload-hint">
+        <p id="upload-hint" class="hint">Text-based PDFs up to 8 MB. Scanned image PDFs need OCR, which is not supported here.</p>
+      </div>
+
+      <div class="field">
+        <label for="resume-text">Extracted resume text</label>
+        <textarea id="resume-text" name="resume-text" aria-describedby="resume-hint" placeholder="Choose a PDF to extract text. You can edit it here before saving."></textarea>
+        <p id="resume-hint" class="hint">Review and correct this text. Uploaded content is reference data, not instructions.</p>
+      </div>
+
+      <h2 class="section-heading">2. Add your interview context</h2>
+      <div class="field">
+        <label for="target-role">Target role</label>
+        <input id="target-role" name="target-role" type="text" maxlength="120" autocomplete="organization-title" required placeholder="For example, Backend Engineer">
+      </div>
+      <div class="field">
+        <label for="experience-level">Experience level</label>
+        <select id="experience-level" name="experience-level" required>
+          <option value="" selected disabled>Choose your level</option>
+          <option value="entry">Entry-level</option>
+          <option value="early-career">Early-career</option>
+          <option value="mid-level">Mid-level</option>
+          <option value="senior">Senior</option>
+          <option value="staff">Staff or leadership</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="job-description">Job description <span class="subtle">(optional)</span></label>
+        <textarea id="job-description" name="job-description" maxlength="30000" rows="5" placeholder="Paste the job description if you want to tailor this preparation."></textarea>
+      </div>
+      <div class="actions">
+        <button id="save-button" type="button">Save preparation</button>
+        <span id="save-note" class="hint">Your changes are saved only on this device.</span>
+      </div>
+
+      <section aria-labelledby="saved-title">
+        <h2 id="saved-title" class="section-heading">Saved preparations</h2>
+        <p id="empty-saved" class="hint">No saved preparations yet.</p>
+        <ul id="saved-list" class="saved-list" aria-label="Saved preparations"></ul>
+      </section>
+    </section>
+    <footer>For local use only. Keep this app bound to your own device.</footer>
+  </main>
+
+  <script>
+    const fileInput = document.querySelector("#resume-file");
+    const resumeText = document.querySelector("#resume-text");
+    const roleInput = document.querySelector("#target-role");
+    const experienceInput = document.querySelector("#experience-level");
+    const jobDescription = document.querySelector("#job-description");
+    const errorMessage = document.querySelector("#error-message");
+    const statusMessage = document.querySelector("#status-message");
+    const savedList = document.querySelector("#saved-list");
+    const emptySaved = document.querySelector("#empty-saved");
+    let currentPreparationId = null;
+
+    function showError(message) {
+      errorMessage.textContent = message;
+      errorMessage.hidden = false;
+      statusMessage.textContent = "";
+    }
+
+    function clearError() {
+      errorMessage.textContent = "";
+      errorMessage.hidden = true;
+    }
+
+    function showStatus(message) {
+      clearError();
+      statusMessage.textContent = message;
+    }
+
+    async function responseData(response) {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Something went wrong. Please try again.");
+      return data;
+    }
+
+    fileInput.addEventListener("change", async () => {
+      clearError();
+      const file = fileInput.files[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf")) {
+        showError("Choose a PDF file to extract resume text.");
+        fileInput.value = "";
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        showError("This PDF is larger than 8 MB. Choose a smaller file.");
+        fileInput.value = "";
+        return;
+      }
+      showStatus("Reading PDF…");
+      const data = new FormData();
+      data.append("file", file);
+      try {
+        const response = await fetch("/api/extract", { method: "POST", body: data });
+        const result = await responseData(response);
+        resumeText.value = result.resume_text;
+        currentPreparationId = null;
+        showStatus("Text extracted. Review and correct it before saving.");
+        resumeText.focus();
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+
+    document.querySelector("#save-button").addEventListener("click", async () => {
+      clearError();
+      const payload = {
+        target_role: roleInput.value,
+        experience_level: experienceInput.value,
+        job_description: jobDescription.value,
+        resume_text: resumeText.value,
+      };
+      try {
+        const isUpdating = currentPreparationId !== null;
+        const url = isUpdating
+          ? `/api/preparations/${encodeURIComponent(currentPreparationId)}`
+          : "/api/preparations";
+        const response = await fetch(url, {
+          method: isUpdating ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const saved = await responseData(response);
+        currentPreparationId = saved.id;
+        showStatus("Preparation saved.");
+        await loadPreparations();
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+
+    async function openPreparation(id) {
+      try {
+        const preparation = await responseData(await fetch(`/api/preparations/${encodeURIComponent(id)}`));
+        currentPreparationId = preparation.id;
+        roleInput.value = preparation.target_role;
+        experienceInput.value = preparation.experience_level;
+        jobDescription.value = preparation.job_description;
+        resumeText.value = preparation.resume_text;
+        showStatus("Saved preparation opened.");
+        roleInput.focus();
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    async function deletePreparation(id) {
+      if (!window.confirm("Delete this saved preparation from this device?")) return;
+      try {
+        const response = await fetch(`/api/preparations/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error("Could not delete this preparation. Try again.");
+        if (currentPreparationId === id) currentPreparationId = null;
+        showStatus("Preparation deleted from this device.");
+        await loadPreparations();
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    async function loadPreparations() {
+      try {
+        const preparations = await responseData(await fetch("/api/preparations"));
+        savedList.replaceChildren();
+        emptySaved.hidden = preparations.length > 0;
+        for (const preparation of preparations) {
+          const item = document.createElement("li");
+          item.className = "saved-item";
+          const description = document.createElement("p");
+          const role = document.createElement("strong");
+          role.textContent = preparation.target_role;
+          const level = document.createElement("small");
+          level.textContent = `${preparation.experience_level} · Updated ${new Date(preparation.updated_at).toLocaleString()}`;
+          description.append(role, level);
+
+          const actions = document.createElement("div");
+          actions.className = "saved-actions";
+          const open = document.createElement("button");
+          open.className = "secondary";
+          open.type = "button";
+          open.textContent = "Open preparation";
+          open.setAttribute("aria-label", `Open preparation: ${preparation.target_role}`);
+          open.addEventListener("click", () => openPreparation(preparation.id));
+          const remove = document.createElement("button");
+          remove.className = "danger";
+          remove.type = "button";
+          remove.textContent = "Delete";
+          remove.setAttribute("aria-label", `Delete preparation: ${preparation.target_role}`);
+          remove.addEventListener("click", () => deletePreparation(preparation.id));
+          actions.append(open, remove);
+          item.append(description, actions);
+          savedList.append(item);
+        }
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    loadPreparations();
+  </script>
+</body>
+</html>
