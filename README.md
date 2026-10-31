@@ -24,6 +24,8 @@ the server with `Ctrl+C`.
 
 The server binds to loopback (`127.0.0.1`) so the app is available only on this device by default. Do not expose it to a network or public host without adding appropriate access controls.
 
+OpenAI HTTPS requests use the `certifi` CA bundle from `requirements.txt`, including on Python installations without a system CA bundle. TLS certificate verification remains enabled.
+
 ## Prepare a resume
 
 1. Choose a text-based PDF (up to 8 MB). Scanned image PDFs are not supported; OCR is not included.

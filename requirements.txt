@@ -3,3 +3,4 @@ uvicorn[standard]>=0.32,<1.0
 pypdf>=5.0,<7.0
 python-multipart>=0.0.18,<1.0
 langgraph>=0.2,<1.0
+certifi>=2024.8.30

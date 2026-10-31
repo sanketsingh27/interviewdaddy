@@ -42,7 +42,12 @@ class ControlledOpenAIHandler(BaseHTTPRequestHandler):
             if context["question_type"] == "relevant follow-up"
             else "Tell me about the payment service you built."
         )
-        body = json.dumps({"output_text": question}).encode()
+        body = json.dumps({"output": [
+            {"type": "reasoning", "summary": []},
+            {"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": question, "annotations": []},
+            ]},
+        ]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

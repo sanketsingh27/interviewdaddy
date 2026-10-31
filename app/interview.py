@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import ssl
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 
+import certifi
 from fastapi import HTTPException
 from langgraph.graph import END, START, StateGraph
 
@@ -58,10 +60,23 @@ def request_question(state: InterviewState) -> dict[str, str]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with urllib.request.urlopen(request, timeout=45, context=ssl.create_default_context(cafile=certifi.where())) as response:
             data = json.load(response)
-        output_text = data.get("output_text") if isinstance(data, dict) else None
-        question = output_text.strip() if isinstance(output_text, str) else ""
+        # Raw Responses API JSON contains text blocks; output_text is an SDK helper.
+        output = data.get("output", []) if isinstance(data, dict) else []
+        text_parts: list[str] = []
+        for item in output if isinstance(output, list) else []:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            content = item.get("content", [])
+            for block in content if isinstance(content, list) else []:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    text_parts.append(block["text"])
+        question = "".join(text_parts).strip()
     except (urllib.error.URLError, TimeoutError, ValueError) as error:
         raise HTTPException(status_code=502, detail="The OpenAI interview request failed. Check the API key, organization limits, and network, then retry.") from error
     if not question:
