@@ -69,6 +69,17 @@ class InterviewAnswerInput(BaseModel):
     text: str = Field(min_length=1, max_length=10_000)
 
 
+class InterviewActionInput(BaseModel):
+    action: str
+
+
+@app.post("/api/interviews/{interview_id}/actions")
+def interview_action(interview_id: str, payload: InterviewActionInput) -> dict:
+    from app.interview import handle_action
+
+    return handle_action(interview_id, payload.action)
+
+
 @app.post("/api/interviews", status_code=201)
 def start_interview(payload: InterviewStartInput) -> dict:
     from app.interview import create_interview

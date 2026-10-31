@@ -241,17 +241,20 @@ def test_spoken_interview_follows_answer_and_persists_completion(browser_app):
     follow_up = "What trade-off did you make in the payment API migration?"
     page.get_by_text(f"Interviewer: {follow_up}").wait_for()
     page.get_by_role("button", name="Speak answer").click()
+    page.wait_for_function("document.querySelectorAll('#transcript li').length >= 5")
+    page.get_by_role("button", name="Finish interview").click()
     page.get_by_text("Interview complete.", exact=True).wait_for()
     interview_id = page.locator("#transcript").get_attribute("data-interview-id")
     assert interview_id
     result = page.request.get(f"{base_url}/api/interviews/{interview_id}").json()
     assert result["status"] == "completed"
-    assert result["turns"] == [
+    assert result["turns"][:4] == [
         {"speaker": "Interviewer", "text": question},
         {"speaker": "Candidate", "text": "I moved writes to an idempotent API"},
         {"speaker": "Interviewer", "text": follow_up},
         {"speaker": "Candidate", "text": "I moved writes to an idempotent API"},
     ]
+    assert result["turns"][4]["speaker"] == "Interviewer"
     assert result["preparation_id"] == saved["id"]
     assert page.get_by_text("Microphone capture: off").is_visible()
     rejected = page.request.post(
@@ -427,7 +430,7 @@ def test_camera_preview_stays_local_during_interview_and_stops_on_completion(bro
         assert set(provider_request) == {"model", "input", "max_output_tokens"}
         assert all(isinstance(message["content"], str) for message in provider_request["input"])
         context = json.loads(provider_request["input"][1]["content"])
-        assert set(context) == {"role", "experience", "job_description", "resume", "latest_answer", "question_type"}
+        assert set(context) == {"role", "experience", "job_description", "resume", "latest_answer", "question_type", "current_question", "conversation"}
     assert saved["id"]
     page.close()
 

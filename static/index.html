@@ -121,7 +121,7 @@
     </section>
     <section id="interview-panel" class="panel" aria-labelledby="interview-title">
       <h2 id="interview-title" class="section-heading">3. Spoken interview</h2>
-      <p>10 minutes maximum · one opening question and one answer-based follow-up. You can finish early.</p>
+      <p>10 minutes maximum · one question at a time, with bounded follow-ups. You can finish early.</p>
       <p>OpenAI receives your saved resume context and completed text answers for reasoning. Speech recognition is provided by your browser and may send microphone audio to its platform service. No raw audio is stored. API usage requires an OpenAI API key and separate API billing; a ChatGPT subscription does not provide API access.</p>
       <div class="actions">
         <button id="mic-check" class="secondary" type="button">Check microphone</button>
@@ -136,6 +136,11 @@
         <ol id="transcript" aria-label="Saved interview transcript"></ol>
         <div class="actions">
           <button id="answer-button" type="button">Speak answer</button>
+          <button id="stop-playback" class="secondary" type="button">Interrupt playback</button>
+          <button class="secondary interview-action" data-action="repeat" type="button">Repeat question</button>
+          <button class="secondary interview-action" data-action="rephrase" type="button">Rephrase question</button>
+          <button class="secondary interview-action" data-action="think" type="button">Need thinking time</button>
+          <button class="secondary interview-action" data-action="hint" type="button">Request a hint</button>
           <button id="finish-interview" class="danger" type="button">Finish interview</button>
         </div>
         <p id="interview-state" role="status" aria-live="polite"></p>
@@ -306,6 +311,8 @@
     let audioContext = null;
     let interviewTimer = null;
     let activeRecognition = null;
+    let turnPending = false;
+    let playbackVersion = 0;
     let meterFrame = null;
     const cameraToggle = document.querySelector("#camera-toggle");
     const cameraPreview = document.querySelector("#camera-preview");
@@ -443,21 +450,49 @@
         speakQuestion(result.question);
       } catch (error) { showInterviewError(error.message); }
     });
+    document.querySelector("#stop-playback").addEventListener("click", () => { playbackVersion++; window.speechSynthesis?.cancel(); });
+    document.querySelectorAll(".interview-action").forEach(button => button.addEventListener("click", async () => {
+      if (!activeInterview || turnPending || activeRecognition) return;
+      window.speechSynthesis?.cancel();
+      const interview = activeInterview;
+      const playback = playbackVersion;
+      turnPending = true;
+      try {
+        const result = await responseData(await fetch(`/api/interviews/${interview}/actions`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: button.dataset.action }),
+        }));
+        if (activeInterview !== interview) return;
+        addTranscript(result.turns);
+        if (result.status === "completed") document.querySelector("#finish-interview").click();
+        else if (playback === playbackVersion) speakQuestion(result.spoken);
+      } catch (error) { showInterviewError(error.message); }
+      finally { turnPending = false; }
+    }));
     document.querySelector("#answer-button").addEventListener("click", () => {
-      if (!activeInterview) return;
+      if (!activeInterview || turnPending || activeRecognition) return;
+      window.speechSynthesis?.cancel();
       const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!Recognition) return showInterviewError("Speech recognition is not supported in this browser.");
       const recognition = new Recognition();
-      recognition.onend = () => { activeRecognition = null; };
+      recognition.onend = () => { if (activeRecognition === recognition) activeRecognition = null; };
       recognition.lang = "en-US";
       recognition.interimResults = false;
+      let submitted = false;
+      const interview = activeInterview;
+      const playback = playbackVersion;
       recognition.onresult = async event => {
+        if (submitted || activeInterview !== interview) return;
+        submitted = true;
+        turnPending = true;
         const text = event.results[0][0].transcript;
         recognition.stop();
+        if (activeRecognition === recognition) activeRecognition = null;
         try {
-          const result = await responseData(await fetch(`/api/interviews/${activeInterview}/turns`, {
+          const result = await responseData(await fetch(`/api/interviews/${interview}/turns`, {
             method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
           }));
+          if (activeInterview !== interview) return;
           addTranscript(result.turns);
           document.querySelector("#interview-state").textContent = result.notice || (result.status === "completed" ? "Interview complete." : "Answer saved.");
           if (result.status === "completed") {
@@ -469,19 +504,23 @@
             stopMicrophone();
             stopCamera();
           }
-          else speakQuestion(result.question);
+          else if (playback === playbackVersion) speakQuestion(result.question);
         } catch (error) { showInterviewError(error.message); }
+        finally { turnPending = false; }
       };
       recognition.onerror = event => showInterviewError(event.error === "not-allowed"
         ? "Microphone permission was denied. Allow access in browser settings and retry."
         : `Speech recognition failed (${event.error}). Check your microphone and retry.`);
+      activeRecognition = recognition;
       recognition.start();
     });
     document.querySelector("#finish-interview").addEventListener("click", async () => {
-      if (activeInterview) {
-        const result = await responseData(await fetch(`/api/interviews/${activeInterview}/finish`, { method: "POST" }));
+      const interview = activeInterview;
+      activeInterview = null;
+      playbackVersion++;
+      if (interview) {
+        const result = await responseData(await fetch(`/api/interviews/${interview}/finish`, { method: "POST" }));
         addTranscript(result.turns);
-        activeInterview = null;
       }
       activeRecognition?.abort();
       activeRecognition = null;

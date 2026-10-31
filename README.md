@@ -39,9 +39,11 @@ The optional **Enable camera preview** control displays video locally during pre
 
 ## Run a spoken interview
 
-Set `OPENAI_API_KEY` in the repository-root `.env` file before launching. `./dev.sh` loads it server-side. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` if needed. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow and allows up to 10 minutes, one opening question, and one answer-based follow-up. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If follow-up generation fails, the recognized answer remains saved and the interview completes.
+Set `OPENAI_API_KEY` in the repository-root `.env` file before launching. `./dev.sh` loads it server-side. The default model is `gpt-6-luna`; override with `OPENAI_MODEL` if needed. API credits and usage are subject to the OpenAI organization's limits and billing. The interviewer uses one LangGraph workflow for up to 10 minutes, with one follow-up per topic before moving on. Questions use the saved preparation and completed conversation, with depth adjusted to the experience level. You can finish early. The transcript stores recognized text and speaker attribution, not raw audio. If question generation fails, the recognized answer remains saved and the interview completes.
 
 Use a supported browser with microphone and speech synthesis support. Choose **Check microphone** and **Test speaker** before starting. Allow microphone permission when asked. Browser recognition support and audio processing vary by browser; check its privacy policy.
+
+Use **Interrupt playback** or start speaking to stop the current question. You can request repetition, rephrasing, thinking time, or a hint using the on-screen controls. Hints are labelled in the transcript and retained as assessment evidence; they are not presented as independent answers. Recognition errors can appear in the transcript.
 
 The interviewer will not start without a saved preparation and configured API key. Keep the app bound to loopback and do not expose it publicly.
 
