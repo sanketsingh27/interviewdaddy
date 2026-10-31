@@ -70,7 +70,7 @@ def preparation_to_dict(row: sqlite3.Row) -> dict[str, str]:
     }
 
 
-def validated_values(preparation: PreparationInput) -> tuple[str, str, str, str]:
+def validate_preparation(preparation: PreparationInput) -> PreparationInput:
     target_role = preparation.target_role.strip()
     resume_text = preparation.resume_text.strip()
     if not target_role:
@@ -79,7 +79,12 @@ def validated_values(preparation: PreparationInput) -> tuple[str, str, str, str]
         raise HTTPException(status_code=422, detail="Resume text cannot be blank.")
     if preparation.experience_level not in EXPERIENCE_LEVELS:
         raise HTTPException(status_code=422, detail="Choose a valid experience level.")
-    return target_role, preparation.experience_level, preparation.job_description.strip(), resume_text
+    return PreparationInput(
+        target_role=target_role,
+        experience_level=preparation.experience_level,
+        job_description=preparation.job_description.strip(),
+        resume_text=resume_text,
+    )
 
 
 @app.get("/")
@@ -142,7 +147,7 @@ def list_preparations() -> list[dict[str, str]]:
 
 @app.post("/api/preparations", status_code=201)
 def save_preparation(preparation: PreparationInput) -> dict[str, str]:
-    target_role, experience_level, job_description, resume_text = validated_values(preparation)
+    preparation = validate_preparation(preparation)
     preparation_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
     with connect_database() as connection:
@@ -152,10 +157,10 @@ def save_preparation(preparation: PreparationInput) -> dict[str, str]:
             VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 preparation_id,
-                target_role,
-                experience_level,
-                job_description,
-                resume_text,
+                preparation.target_role,
+                preparation.experience_level,
+                preparation.job_description,
+                preparation.resume_text,
                 timestamp,
                 timestamp,
             ),
@@ -166,13 +171,20 @@ def save_preparation(preparation: PreparationInput) -> dict[str, str]:
 
 @app.put("/api/preparations/{preparation_id}")
 def update_preparation(preparation_id: str, preparation: PreparationInput) -> dict[str, str]:
-    target_role, experience_level, job_description, resume_text = validated_values(preparation)
+    preparation = validate_preparation(preparation)
     timestamp = datetime.now(timezone.utc).isoformat()
     with connect_database() as connection:
         cursor = connection.execute(
             """UPDATE preparations SET target_role = ?, experience_level = ?, job_description = ?,
             resume_text = ?, updated_at = ? WHERE id = ?""",
-            (target_role, experience_level, job_description, resume_text, timestamp, preparation_id),
+            (
+                preparation.target_role,
+                preparation.experience_level,
+                preparation.job_description,
+                preparation.resume_text,
+                timestamp,
+                preparation_id,
+            ),
         )
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="This preparation was not found. It may have been deleted.")
