@@ -4,3 +4,7 @@ __pycache__/
 data/
 *.py[cod]
 .env
+node_modules/
+.next/
+*.tsbuildinfo
+frontend/next-env.d.ts
