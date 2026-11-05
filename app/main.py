@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -166,10 +165,6 @@ def validate_preparation(preparation: PreparationInput) -> PreparationInput:
     )
 
 
-@app.get("/")
-def index() -> FileResponse:
-    """Serve the application homepage."""
-    return FileResponse(ROOT / "static" / "index.html")
 
 
 @app.post("/api/extract")

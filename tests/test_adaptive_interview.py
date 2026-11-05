@@ -1,4 +1,4 @@
-from test_preparation_browser import browser_app
+from test_preparation_browser import app_server, browser_app
 
 
 def test_assistance_and_repeat_are_recorded_without_consuming_answer(browser_app):
@@ -27,12 +27,14 @@ def test_browser_can_interrupt_repeat_and_move_on_after_uncertainty(browser_app)
       stop() {} abort() {}
     };""")
     page.goto(base_url)
-    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Practise", exact=True).first.click()
     page.get_by_role("button", name="Start 10-minute interview").click()
     page.locator("#transcript li").first.wait_for()
     page.get_by_role("button", name="Interrupt playback").click()
+    page.get_by_text("Ask for help", exact=True).click()
     page.get_by_role("button", name="Repeat question").click()
     page.wait_for_function("document.querySelectorAll('#transcript li').length === 3")
+    page.get_by_text("Ask for help", exact=True).click()
     page.get_by_role("button", name="Request a hint").click()
     page.wait_for_function("document.querySelectorAll('#transcript li').length === 5")
     page.get_by_role("button", name="Speak answer").click()
@@ -63,7 +65,7 @@ def test_speech_status_tracks_listening_processing_and_playback(browser_app):
     window.speechSynthesis.speak = utterance => { window.utterance = utterance; utterance.onstart?.(); };
     """)
     page.goto(base_url)
-    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Practise", exact=True).first.click()
     page.get_by_role("button", name="Start 10-minute interview").click()
     page.get_by_text("Interviewer is speaking.", exact=True).wait_for()
     page.get_by_role("button", name="Speak answer").click()

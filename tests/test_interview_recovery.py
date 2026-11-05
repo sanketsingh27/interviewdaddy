@@ -1,4 +1,4 @@
-from test_preparation_browser import browser_app
+from test_preparation_browser import app_server, browser_app
 
 
 def test_pause_refresh_and_recover_partial_answer(browser_app):
@@ -9,7 +9,7 @@ def test_pause_refresh_and_recover_partial_answer(browser_app):
       abort() { window.aborted = true; } stop() {}
     };""")
     page.goto(base_url)
-    page.get_by_role("button", name="Open preparation").first.click()
+    page.get_by_role("button", name="Practise", exact=True).first.click()
     page.get_by_role("button", name="Start 10-minute interview").click()
     page.get_by_role("button", name="Speak answer").click()
     page.get_by_role("button", name="Pause interview").click()
@@ -26,7 +26,7 @@ def test_pause_refresh_and_recover_partial_answer(browser_app):
     assert page.request.get(f"{base_url}/api/interviews/{interview_id}").json()["question"] == paused["question"]
     page.get_by_role("button", name="Speak answer").click()
     page.evaluate("window.recognition.onresult({results: [[{transcript: 'I built the API'}]]})")
-    page.get_by_text("Candidate: I built the API").wait_for()
+    page.locator("#transcript").get_by_text("I built the API", exact=True).wait_for()
     assert len(page.request.get(f"{base_url}/api/interviews/{interview_id}").json()["turns"]) == 3
 
 
@@ -42,12 +42,12 @@ def test_reconnect_preserves_order_and_paused_time(browser_app):
     page.goto(base_url)
     page.evaluate("(id) => sessionStorage.setItem('interview-id', id)", interview["id"])
     page.reload()
-    page.get_by_text("Candidate: I built the API").wait_for()
+    page.locator("#transcript").get_by_text("I built the API", exact=True).wait_for()
     page.context.set_offline(True)
     page.get_by_text("Connection lost", exact=False).first.wait_for()
     page.context.set_offline(False)
     page.get_by_text("Connection: connected").wait_for()
-    assert page.locator("#transcript li").all_text_contents() == [f"{turn['speaker']}: {turn['text']}" for turn in answered["turns"]]
+    assert page.locator("#transcript li > p").all_text_contents() == [turn["text"] for turn in answered["turns"]]
     page.get_by_role("button", name="Pause interview").click()
     page.get_by_text("Paused", exact=False).first.wait_for()
     old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
